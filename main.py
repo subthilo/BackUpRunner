@@ -40,11 +40,65 @@ from kivy.properties import ObjectProperty, StringProperty
 from scanner import scan_directory, build_hash_index
 from comparator import compare_directories, ComparisonResult
 from report import export_csv, format_size
+from operations import copy_file, move_to_trash
 
 
 # ============================================================================
 # Screen 1: Verzeichnisauswahl
 # ============================================================================
+
+
+def open_directory_chooser(title, callback):
+    """Öffnet einen Dateibrowser zur Verzeichnisauswahl."""
+    content = BoxLayout(orientation='vertical', spacing=10, padding=10)
+    from kivy.uix.textinput import TextInput
+    path_input = TextInput(
+        text='/', hint_text='Pfad eingeben, z.B. /Volumes/MeinNAS', multiline=False,
+        size_hint_y=None, height='40dp', font_size='14sp',
+        background_color=(0.176, 0.176, 0.255, 1), foreground_color=(0.804, 0.839, 0.957, 1),
+        cursor_color=(0.537, 0.706, 0.980, 1), padding=[10, 10, 10, 10]
+    )
+    content.add_widget(path_input)
+    nav_layout = BoxLayout(size_hint_y=None, height='36dp', spacing=5)
+    nav_volumes = CustomButton(text='📁 /Volumes', height='36dp', font_size='13sp')
+    nav_home = CustomButton(text='🏠 Home', height='36dp', font_size='13sp')
+    nav_root = CustomButton(text='💻 /', height='36dp', font_size='13sp')
+    nav_layout.add_widget(nav_volumes)
+    nav_layout.add_widget(nav_home)
+    nav_layout.add_widget(nav_root)
+    content.add_widget(nav_layout)
+    filechooser = FileChooserListView(path='/', dirselect=True)
+    def on_path_change(instance, value):
+        path_input.text = value
+    filechooser.bind(path=on_path_change)
+    def on_path_input(instance):
+        entered = instance.text.strip()
+        import os
+        if os.path.isdir(entered):
+            filechooser.path = entered
+    path_input.bind(on_text_validate=on_path_input)
+    def go_volumes(instance): filechooser.path = '/Volumes'
+    def go_home(instance): filechooser.path = os.path.expanduser('~')
+    def go_root(instance): filechooser.path = '/'
+    nav_volumes.bind(on_release=go_volumes)
+    nav_home.bind(on_release=go_home)
+    nav_root.bind(on_release=go_root)
+    content.add_widget(filechooser)
+    button_layout = BoxLayout(size_hint_y=None, height='48dp', spacing=10)
+    cancel_btn = CustomButton(text='Abbrechen')
+    cancel_btn.background_color = (0.953, 0.545, 0.659, 1)
+    select_btn = CustomButton(text='Auswählen')
+    button_layout.add_widget(cancel_btn)
+    button_layout.add_widget(select_btn)
+    content.add_widget(button_layout)
+    popup = Popup(title=title, content=content, size_hint=(0.9, 0.9))
+    cancel_btn.bind(on_release=popup.dismiss)
+    def on_select(instance):
+        selected = filechooser.selection[0] if filechooser.selection else filechooser.path
+        callback(selected)
+        popup.dismiss()
+    select_btn.bind(on_release=on_select)
+    popup.open()
 
 class SelectScreen(Screen):
     """
@@ -65,14 +119,14 @@ class SelectScreen(Screen):
 
     def choose_source(self):
         """Öffnet einen Dateibrowser zur Auswahl des Quellverzeichnisses."""
-        self._open_directory_chooser(
+        open_directory_chooser(
             title='Quellverzeichnis wählen',
             callback=self._set_source
         )
 
     def choose_target(self):
         """Öffnet einen Dateibrowser zur Auswahl des Zielverzeichnisses."""
-        self._open_directory_chooser(
+        open_directory_chooser(
             title='Zielverzeichnis wählen',
             callback=self._set_target
         )
@@ -84,119 +138,6 @@ class SelectScreen(Screen):
     def _set_target(self, path):
         """Callback: Setzt den gewählten Pfad als Zielverzeichnis."""
         self.target_input.text = path
-
-    def _open_directory_chooser(self, title, callback):
-        """
-        Öffnet ein Popup mit einem Dateibrowser zur Verzeichnisauswahl.
-
-        Der Dateibrowser zeigt nur Verzeichnisse an (keine Dateien).
-        Der gewählte Pfad wird über den Callback zurückgegeben.
-
-        Args:
-            title:      Titel des Popup-Fensters
-            callback:   Funktion, die mit dem gewählten Pfad aufgerufen wird
-        """
-        # Layout für das Popup
-        content = BoxLayout(orientation='vertical', spacing=10, padding=10)
-
-        # ── Pfad-Eingabefeld: Pfad direkt eintippen oder einfügen ──
-        from kivy.uix.textinput import TextInput
-        path_input = TextInput(
-            text='/',
-            hint_text='Pfad eingeben, z.B. /Volumes/MeinNAS',
-            multiline=False,
-            size_hint_y=None,
-            height='40dp',
-            font_size='14sp',
-            background_color=(0.176, 0.176, 0.255, 1),
-            foreground_color=(0.804, 0.839, 0.957, 1),
-            cursor_color=(0.537, 0.706, 0.980, 1),
-            padding=[10, 10, 10, 10]
-        )
-        content.add_widget(path_input)
-
-        # ── Schnellnavigation: Buttons für häufige Orte ──
-        nav_layout = BoxLayout(size_hint_y=None, height='36dp', spacing=5)
-
-        nav_volumes = CustomButton(text='📁 /Volumes', height='36dp', font_size='13sp')
-        nav_home = CustomButton(text='🏠 Home', height='36dp', font_size='13sp')
-        nav_root = CustomButton(text='💻 /', height='36dp', font_size='13sp')
-
-        nav_layout.add_widget(nav_volumes)
-        nav_layout.add_widget(nav_home)
-        nav_layout.add_widget(nav_root)
-        content.add_widget(nav_layout)
-
-        # Dateibrowser – zeigt nur Verzeichnisse, startet bei /
-        filechooser = FileChooserListView(
-            path='/',                       # Startet beim Wurzelverzeichnis
-            dirselect=True,                 # Verzeichnisse auswählbar
-            filters=['!.*'],                # Versteckte Dateien ausblenden
-        )
-
-        # Pfad-Eingabe mit FileChooser synchronisieren
-        def on_path_change(instance, value):
-            """Aktualisiert das Pfad-Eingabefeld wenn im Browser navigiert wird."""
-            path_input.text = value
-        filechooser.bind(path=on_path_change)
-
-        def on_path_input(instance):
-            """Navigiert den FileChooser zum eingegebenen Pfad."""
-            entered = instance.text.strip()
-            if os.path.isdir(entered):
-                filechooser.path = entered
-        path_input.bind(on_text_validate=on_path_input)
-
-        # Schnellnavigation-Callbacks
-        def go_volumes(instance):
-            filechooser.path = '/Volumes'
-        def go_home(instance):
-            filechooser.path = os.path.expanduser('~')
-        def go_root(instance):
-            filechooser.path = '/'
-
-        nav_volumes.bind(on_release=go_volumes)
-        nav_home.bind(on_release=go_home)
-        nav_root.bind(on_release=go_root)
-
-        content.add_widget(filechooser)
-
-        # Button-Leiste
-        button_layout = BoxLayout(size_hint_y=None, height='48dp', spacing=10)
-
-        # Abbrechen-Button
-        cancel_btn = CustomButton(text='Abbrechen')
-        cancel_btn.background_color = (0.953, 0.545, 0.659, 1)  # Rot
-
-        # Auswählen-Button
-        select_btn = CustomButton(text='Auswählen')
-
-        button_layout.add_widget(cancel_btn)
-        button_layout.add_widget(select_btn)
-        content.add_widget(button_layout)
-
-        # Popup erstellen
-        popup = Popup(
-            title=title,
-            content=content,
-            size_hint=(0.9, 0.9)
-        )
-
-        # Button-Aktionen
-        cancel_btn.bind(on_release=popup.dismiss)
-
-        def on_select(instance):
-            """Wird aufgerufen, wenn der Benutzer 'Auswählen' klickt."""
-            if filechooser.selection:
-                selected = filechooser.selection[0]
-            else:
-                # Kein Eintrag ausgewählt → aktuelles Verzeichnis verwenden
-                selected = filechooser.path
-            callback(selected)
-            popup.dismiss()
-
-        select_btn.bind(on_release=on_select)
-        popup.open()
 
     def start_scan(self):
         """
@@ -211,11 +152,11 @@ class SelectScreen(Screen):
 
         # ── Eingabe-Validierung ──
         if not source or not target:
-            self.status_label.text = '⚠️ Bitte beide Verzeichnisse angeben!'
+            self.status_label.text = '⚠️ Bitte Quelle und Ziel angeben!'
             return
 
-        if not os.path.isdir(source):
-            self.status_label.text = f'⚠️ Quellverzeichnis existiert nicht: {source}'
+        if not os.path.exists(source):
+            self.status_label.text = f'⚠️ Quelle existiert nicht: {source}'
             return
 
         if not os.path.isdir(target):
@@ -232,6 +173,7 @@ class SelectScreen(Screen):
         app = App.get_running_app()
         app.source_path = source
         app.target_path = target
+        app.fast_mode = self.ids.fast_mode_checkbox.active
 
         # Zum Scan-Screen wechseln
         self.manager.transition = SlideTransition(direction='left')
@@ -239,7 +181,7 @@ class SelectScreen(Screen):
 
         # Scan starten (im ScanScreen)
         scan_screen = self.manager.get_screen('scan')
-        scan_screen.start_scan(source, target)
+        scan_screen.start_scan(source, target, app.fast_mode)
 
 
 # Hilfklasse für Buttons (wird auch in Python-Code verwendet)
@@ -289,18 +231,19 @@ class ScanScreen(Screen):
         self._scan_thread = None
         self._cancelled = False
 
-    def start_scan(self, source_path, target_path):
+    def start_scan(self, source_path, target_path, fast_mode=False):
         """
         Startet den Scan-Vorgang in einem Hintergrund-Thread.
 
         Args:
             source_path: Pfad zum Quellverzeichnis
             target_path: Pfad zum Zielverzeichnis
+            fast_mode: Wenn True, wird nur Größe & Datum statt Hash verglichen
         """
         self._cancelled = False
         self._scan_thread = threading.Thread(
             target=self._run_scan,
-            args=(source_path, target_path),
+            args=(source_path, target_path, fast_mode),
             daemon=True  # Thread wird beendet, wenn die App beendet wird
         )
         self._scan_thread.start()
@@ -344,7 +287,7 @@ class ScanScreen(Screen):
                 self.current_file_label.text = filepath
         Clock.schedule_once(update)
 
-    def _run_scan(self, source_path, target_path):
+    def _run_scan(self, source_path, target_path, fast_mode):
         """
         Haupt-Scan-Logik – läuft im Hintergrund-Thread.
 
@@ -358,9 +301,12 @@ class ScanScreen(Screen):
         Args:
             source_path: Pfad zum Quellverzeichnis
             target_path: Pfad zum Zielverzeichnis
+            fast_mode: Boolean, ob schneller Vergleich aktiv ist
         """
         try:
             # ── Phase 1: Quellverzeichnis scannen ──
+            self._update_ui('📂 Zähle Dateien im Quellverzeichnis...', 0, 0, 'Bitte warten...')
+
             def source_progress(current, total, filepath):
                 if self._cancelled:
                     return
@@ -370,13 +316,15 @@ class ScanScreen(Screen):
                 )
 
             source_files, source_size = scan_directory(
-                source_path, source_progress
+                source_path, source_progress, fast_mode=fast_mode
             )
 
             if self._cancelled:
                 return
 
             # ── Phase 2: Zielverzeichnis scannen ──
+            self._update_ui('💾 Zähle Dateien im Zielverzeichnis...', 0, 0, 'Bitte warten (bei NAS kann das dauern)...')
+
             def target_progress(current, total, filepath):
                 if self._cancelled:
                     return
@@ -386,7 +334,7 @@ class ScanScreen(Screen):
                 )
 
             target_files, target_size = scan_directory(
-                target_path, target_progress
+                target_path, target_progress, fast_mode=fast_mode
             )
 
             if self._cancelled:
@@ -427,6 +375,16 @@ class ScanScreen(Screen):
 # ============================================================================
 # Screen 3: Analyse-Ergebnisse
 # ============================================================================
+
+
+# ============================================================================
+# UI-Komponenten
+# ============================================================================
+
+class FileRow(BoxLayout):
+    filename = StringProperty()
+    detail = StringProperty()
+    size_text = StringProperty()
 
 class ResultScreen(Screen):
     """
@@ -481,11 +439,17 @@ class ResultScreen(Screen):
                     detail=f'Pfad: {item.source_file.absolute_path}',
                     size=item.source_file.size
                 )
+                btn = CustomButton(text='➕ Kopieren', width='100dp', size_hint_x=None, height='40dp')
+                # Wir binden die Aktion mit default arguments, um scoping issues in Schleifen zu vermeiden
+                btn.bind(on_release=lambda instance, i=item, r=row: self.copy_single_file(i, r))
+                row.ids.action_container.add_widget(btn)
                 self.no_backup_list.add_widget(row)
         else:
             self.no_backup_list.add_widget(
                 self._create_empty_label('🎉 Alle Dateien sind gesichert!')
             )
+
+        # ── Tab "Identisch" füllen ──
 
         # ── Tab "Identisch" füllen ──
         if result.identical:
@@ -525,91 +489,24 @@ class ResultScreen(Screen):
                     detail=f'Pfade: {" | ".join(dup.paths)}',
                     size=dup.size
                 )
+                # Für jedes Duplikat (außer das erste) einen Löschen Button
+                for path in dup.paths[1:]:
+                    btn = CustomButton(text='🗑️ Löschen', width='100dp', size_hint_x=None, height='40dp')
+                    btn.background_color = (0.953, 0.545, 0.659, 1) # Rot
+                    btn.bind(on_release=lambda instance, p=path, r=row, b=btn: self.trash_single_file(p, r, b))
+                    row.ids.action_container.add_widget(btn)
                 self.duplicates_list.add_widget(row)
         else:
             self.duplicates_list.add_widget(
                 self._create_empty_label('Keine Duplikate im Ziel gefunden')
             )
 
-    def _create_file_row(self, filename: str, detail: str, size: int) -> BoxLayout:
-        """
-        Erstellt eine Zeile für die Datei-Liste.
-
-        Jede Zeile zeigt den Dateinamen, Details (z.B. Zielpfad) und die Größe.
-
-        Args:
-            filename:   Dateiname oder relativer Pfad
-            detail:     Zusatzinfo (z.B. Zielpfad, Fundorte)
-            size:       Dateigröße in Bytes
-
-        Returns:
-            BoxLayout-Widget für die Zeile
-        """
-        row = BoxLayout(
-            orientation='horizontal',
-            size_hint_y=None,
-            height='60dp',
-            spacing=10,
-            padding=[10, 5]
-        )
-
-        # Hintergrund für die Zeile (via Canvas)
-        from kivy.graphics import Color, RoundedRectangle
-        with row.canvas.before:
-            Color(0.176, 0.176, 0.255, 0.5)
-            rect = RoundedRectangle(pos=row.pos, size=row.size, radius=[5])
-
-        # Hintergrund-Rechteck aktualisieren, wenn sich Position/Größe ändert
-        def update_rect(instance, value):
-            rect.pos = instance.pos
-            rect.size = instance.size
-        row.bind(pos=update_rect, size=update_rect)
-
-        # Linke Seite: Dateiname + Detail
-        text_layout = BoxLayout(orientation='vertical')
-
-        name_label = Label(
-            text=filename,
-            font_size='14sp',
-            color=(0.804, 0.839, 0.957, 1),
-            text_size=(None, None),
-            halign='left',
-            valign='middle',
-            shorten=True,
-            shorten_from='left'
-        )
-        # text_size an die Widget-Breite binden für Textumbruch
-        name_label.bind(width=lambda inst, val: setattr(inst, 'text_size', (val, None)))
-
-        detail_label = Label(
-            text=detail,
-            font_size='11sp',
-            color=(0.584, 0.616, 0.737, 1),
-            text_size=(None, None),
-            halign='left',
-            valign='middle',
-            shorten=True,
-            shorten_from='left'
-        )
-        detail_label.bind(width=lambda inst, val: setattr(inst, 'text_size', (val, None)))
-
-        text_layout.add_widget(name_label)
-        text_layout.add_widget(detail_label)
-        row.add_widget(text_layout)
-
-        # Rechte Seite: Dateigröße
-        size_label = Label(
-            text=format_size(size),
-            font_size='13sp',
-            color=(0.584, 0.616, 0.737, 1),
-            size_hint_x=None,
-            width='80dp',
-            halign='right',
-            valign='middle'
-        )
-        size_label.bind(width=lambda inst, val: setattr(inst, 'text_size', (val, None)))
-        row.add_widget(size_label)
-
+    def _create_file_row(self, filename: str, detail: str, size: int):
+        from kivy.factory import Factory
+        row = Factory.FileRow()
+        row.filename = filename
+        row.detail = detail
+        row.size_text = format_size(size)
         return row
 
     def _create_empty_label(self, text: str) -> Label:
@@ -629,6 +526,82 @@ class ResultScreen(Screen):
             size_hint_y=None,
             height='60dp'
         )
+
+
+    def copy_single_file(self, item, row):
+        def on_target_selected(target_dir):
+            try:
+                copy_file(
+                    item.source_file.absolute_path, 
+                    target_dir, 
+                    item.source_file.relative_path, 
+                    expected_hash=item.source_file.hash
+                )
+                row.ids.action_container.clear_widgets()
+                lbl = Label(text='✅ Kopiert', color=(0.651, 0.890, 0.631, 1), size_hint_x=None, width='80dp')
+                trash_btn = CustomButton(text='🗑️ Quelle in Papierkorb', size_hint_x=None, width='180dp', height='40dp')
+                trash_btn.background_color = (0.953, 0.545, 0.659, 1) # Rot
+                trash_btn.bind(on_release=lambda instance, p=item.source_file.absolute_path, r=row, b=trash_btn: self.trash_single_file(p, r, b))
+                row.ids.action_container.add_widget(lbl)
+                row.ids.action_container.add_widget(trash_btn)
+            except Exception as e:
+                Popup(title='❌ Fehler beim Kopieren', content=Label(text=str(e), text_size=(400, None)), size_hint=(0.7, 0.3)).open()
+                
+        open_directory_chooser("Wohin soll die Datei kopiert werden?", on_target_selected)
+
+    def trash_single_file(self, path, row, btn):
+        if move_to_trash(path):
+            row.ids.action_container.clear_widgets()
+            lbl = Label(text='✅ Im Papierkorb', color=(0.651, 0.890, 0.631, 1), size_hint_x=None, width='120dp')
+            row.ids.action_container.add_widget(lbl)
+        else:
+            Popup(title='❌ Fehler', content=Label(text=f'Konnte {path} nicht löschen.'), size_hint=(0.7, 0.3)).open()
+
+    def copy_all_missing(self):
+        app = App.get_running_app()
+        result = app.comparison_result
+        if not result or not result.no_backup:
+            return
+            
+        def on_target_selected(target_dir):
+            success_items = []
+            for item in result.no_backup:
+                try:
+                    copy_file(
+                        item.source_file.absolute_path, 
+                        target_dir, 
+                        item.source_file.relative_path, 
+                        expected_hash=item.source_file.hash
+                    )
+                    success_items.append(item)
+                except Exception as e:
+                    print(f"Fehler bei {item.source_file.absolute_path}: {e}")
+            
+            # Popup fragen, ob Originale in den Papierkorb sollen
+            content = BoxLayout(orientation='vertical', spacing=10, padding=10)
+            content.add_widget(Label(
+                text=f'✅ {len(success_items)} Dateien kopiert.\n\nSollen die Original-Dateien auf\ndeinem Mac in den Papierkorb verschoben werden?',
+                halign='center'
+            ))
+            btn_layout = BoxLayout(size_hint_y=None, height='40dp', spacing=10)
+            btn_keep = CustomButton(text='Behalten')
+            btn_trash = CustomButton(text='🗑️ In Papierkorb', background_color=(0.953, 0.545, 0.659, 1))
+            btn_layout.add_widget(btn_keep)
+            btn_layout.add_widget(btn_trash)
+            content.add_widget(btn_layout)
+            
+            popup = Popup(title='Kopieren beendet', content=content, size_hint=(0.8, 0.4))
+            
+            def do_trash(inst):
+                for item in success_items:
+                    move_to_trash(item.source_file.absolute_path)
+                popup.dismiss()
+                
+            btn_keep.bind(on_release=popup.dismiss)
+            btn_trash.bind(on_release=do_trash)
+            popup.open()
+            
+        open_directory_chooser("Zielordner für alle fehlenden Dateien wählen", on_target_selected)
 
     def export_report(self):
         """

@@ -24,10 +24,10 @@ from dataclasses import dataclass, field
 from typing import Callable, Optional
 
 
-# Chunk-Größe für das Lesen großer Dateien (8 KB).
-# Dateien werden in Stücken dieser Größe gelesen, um den Speicherverbrauch
-# bei sehr großen Dateien (z.B. Videos, Disk-Images) gering zu halten.
-CHUNK_SIZE = 8192
+# Chunk-Größe für das Lesen großer Dateien (4 MB statt 8 KB).
+# Bei Netzwerk-Laufwerken (NAS über SMB/WLAN) sind kleine Chunks extrem
+# langsam wegen des Protokoll-Overheads. 4 MB ist ein guter Kompromiss.
+CHUNK_SIZE = 4 * 1024 * 1024
 
 
 @dataclass
@@ -77,31 +77,35 @@ def compute_hash(filepath: str) -> str:
     return sha256.hexdigest()
 
 
-def count_files(directory: str) -> int:
+def count_files(path: str) -> int:
     """
-    Zählt die Anzahl der Dateien in einem Verzeichnis (rekursiv).
+    Zählt die Anzahl der Dateien in einem Verzeichnis (rekursiv) oder gibt 1 zurück, falls es eine Datei ist.
 
     Wird vor dem eigentlichen Scan aufgerufen, um die Gesamtanzahl
     für die Fortschrittsanzeige zu ermitteln.
 
     Args:
-        directory: Pfad zum Verzeichnis
+        path: Pfad zum Verzeichnis oder zur Datei
 
     Returns:
-        Anzahl der Dateien im Verzeichnis (rekursiv)
+        Anzahl der Dateien
     """
+    if os.path.isfile(path):
+        return 1
+
     count = 0
-    for _, _, files in os.walk(directory):
+    for _, _, files in os.walk(path):
         count += len(files)
     return count
 
 
 def scan_directory(
-    directory: str,
-    progress_callback: Optional[Callable[[int, int, str], None]] = None
+    path: str,
+    progress_callback: Optional[Callable[[int, int, str], None]] = None,
+    fast_mode: bool = False
 ) -> tuple[list[FileInfo], int]:
     """
-    Scannt ein Verzeichnis rekursiv und berechnet SHA-256-Hashes.
+    Scannt ein Verzeichnis rekursiv (oder eine einzelne Datei) und berechnet SHA-256-Hashes.
 
     Durchläuft alle Dateien im angegebenen Verzeichnis und dessen
     Unterverzeichnissen. Für jede Datei werden Pfad, Größe, Änderungszeit
@@ -112,10 +116,12 @@ def scan_directory(
     werden mit einer Warnung übersprungen.
 
     Args:
-        directory:          Pfad zum zu scannenden Verzeichnis
+        path:               Pfad zum zu scannenden Verzeichnis oder Datei
         progress_callback:  Optionale Callback-Funktion, die bei jeder
                             verarbeiteten Datei aufgerufen wird.
                             Parameter: (aktuelle_datei_nr, gesamt_dateien, aktueller_pfad)
+        fast_mode:          Wenn True, wird ein Pseudo-Hash basierend auf Größe 
+                            und Änderungszeit generiert.
 
     Returns:
         Tuple aus:
@@ -123,27 +129,50 @@ def scan_directory(
         - Gesamtgröße aller gescannten Dateien in Bytes
 
     Beispiel:
-        def on_progress(current, total, path):
-            print(f"[{current}/{total}] {path}")
+        def on_progress(current, total, p):
+            print(f"[{current}/{total}] {p}")
 
         files, total = scan_directory("/Volumes/USB/Projekte", on_progress)
         print(f"{len(files)} Dateien gescannt, {total / 1e9:.1f} GB")
     """
-    # Verzeichnis normalisieren (trailing slashes entfernen etc.)
-    directory = os.path.normpath(directory)
+    # Pfad normalisieren (trailing slashes entfernen etc.)
+    path = os.path.normpath(path)
 
     # Zuerst Gesamtanzahl ermitteln für Fortschrittsanzeige
-    total_files = count_files(directory)
+    total_files = count_files(path)
 
     files: list[FileInfo] = []
     total_size = 0
     current_count = 0
 
-    # os.walk durchläuft das Verzeichnis rekursiv:
-    # root = aktuelles Verzeichnis
-    # dirs = Liste der Unterverzeichnisse (wird nicht gebraucht)
-    # filenames = Liste der Dateien im aktuellen Verzeichnis
-    for root, dirs, filenames in os.walk(directory, followlinks=False):
+    # Wenn es eine einzelne Datei ist
+    if os.path.isfile(path):
+        try:
+            stat = os.stat(path)
+            size = stat.st_size
+            modified_time = stat.st_mtime
+            
+            if fast_mode:
+                file_hash = f"FAST_{size}_{int(modified_time)}"
+            else:
+                file_hash = compute_hash(path)
+
+            files.append(FileInfo(
+                absolute_path=path,
+                relative_path=os.path.basename(path),
+                size=size,
+                modified_time=modified_time,
+                hash=file_hash
+            ))
+            total_size += size
+            if progress_callback:
+                progress_callback(1, 1, path)
+        except (OSError, PermissionError) as e:
+            print(f"⚠️  Übersprungen (Fehler): {path} – {e}")
+        return files, total_size
+
+    # Wenn es ein Verzeichnis ist
+    for root, dirs, filenames in os.walk(path, followlinks=False):
         for filename in filenames:
             absolute_path = os.path.join(root, filename)
 
@@ -153,7 +182,7 @@ def scan_directory(
                 continue
 
             # Relativen Pfad berechnen (z.B. "Fotos/2024/urlaub.jpg")
-            relative_path = os.path.relpath(absolute_path, directory)
+            relative_path = os.path.relpath(absolute_path, path)
 
             try:
                 # Datei-Metadaten lesen
@@ -161,8 +190,11 @@ def scan_directory(
                 size = stat.st_size
                 modified_time = stat.st_mtime
 
-                # SHA-256 Hash berechnen
-                file_hash = compute_hash(absolute_path)
+                # SHA-256 Hash berechnen (oder Fast Mode Pseudo-Hash)
+                if fast_mode:
+                    file_hash = f"FAST_{size}_{int(modified_time)}"
+                else:
+                    file_hash = compute_hash(absolute_path)
 
                 # FileInfo erstellen und zur Liste hinzufügen
                 file_info = FileInfo(

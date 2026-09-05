@@ -146,6 +146,26 @@
                 width: '120dp'
                 on_release: root.choose_target()
 
+        # ── Schneller Vergleich Checkbox ──
+        BoxLayout:
+            size_hint_y: None
+            height: '40dp'
+            spacing: '10dp'
+
+            CheckBox:
+                id: fast_mode_checkbox
+                active: True
+                size_hint_x: None
+                width: '40dp'
+                color: 0.537, 0.706, 0.980, 1
+
+            Label:
+                text: '⚡ Schneller Vergleich (Nur Größe & Datum - extrem schnell)'
+                color: 0.804, 0.839, 0.957, 1
+                text_size: self.size
+                halign: 'left'
+                valign: 'middle'
+
         # Abstandhalter
         Widget:
             size_hint_y: None
@@ -304,14 +324,27 @@
                 text: '⚠️ Kein Backup'
                 background_color: 0.976, 0.886, 0.686, 0.3
 
-                ScrollView:
-                    BoxLayout:
-                        id: no_backup_list
-                        orientation: 'vertical'
+                BoxLayout:
+                    orientation: 'vertical'
+                    padding: '5dp'
+                    spacing: '5dp'
+
+                    CustomButton:
+                        id: copy_all_button
+                        text: '🚀 Alle fehlenden Dateien kopieren...'
                         size_hint_y: None
-                        height: self.minimum_height
-                        spacing: '2dp'
-                        padding: '10dp'
+                        height: '40dp'
+                        background_color: 0.651, 0.890, 0.631, 1
+                        on_release: root.copy_all_missing()
+
+                    ScrollView:
+                        BoxLayout:
+                            id: no_backup_list
+                            orientation: 'vertical'
+                            size_hint_y: None
+                            height: self.minimum_height
+                            spacing: '2dp'
+                            padding: '5dp'
 
             # ── Tab: Identisch ✅ ──
             TabbedPanelItem:
@@ -373,7 +406,7 @@
 
 # ── Wiederverwendbare Zeile für Datei-Listen ──
 
-<FileRow@BoxLayout>:
+<FileRow>:
     size_hint_y: None
     height: '60dp'
     spacing: '10dp'
@@ -391,7 +424,7 @@
     BoxLayout:
         orientation: 'vertical'
         Label:
-            text: root.filename if hasattr(root, 'filename') else ''
+            text: root.filename
             font_size: '14sp'
             color: 0.804, 0.839, 0.957, 1
             text_size: self.size
@@ -400,7 +433,7 @@
             shorten: True
             shorten_from: 'left'
         Label:
-            text: root.detail if hasattr(root, 'detail') else ''
+            text: root.detail
             font_size: '11sp'
             color: 0.584, 0.616, 0.737, 1
             text_size: self.size
@@ -409,9 +442,9 @@
             shorten: True
             shorten_from: 'left'
 
-    # Dateigröße (rechts)
+    # Dateigröße (Mitte)
     Label:
-        text: root.size_text if hasattr(root, 'size_text') else ''
+        text: root.size_text
         font_size: '13sp'
         color: 0.584, 0.616, 0.737, 1
         size_hint_x: None
@@ -419,3 +452,10 @@
         halign: 'right'
         text_size: self.size
         valign: 'middle'
+
+    # Container für Action-Buttons (rechts)
+    BoxLayout:
+        id: action_container
+        size_hint_x: None
+        width: self.minimum_width
+        spacing: '5dp'
