@@ -70,6 +70,10 @@ def open_directory_chooser(title, callback):
     filechooser = FileChooserListView(path='/', dirselect=True)
     def on_path_change(instance, value):
         path_input.text = value
+        # WICHTIG: Kivy leert die Auswahl nicht automatisch beim Wechseln in einen Ordner!
+        # Wenn der User vorher einen übergeordneten Ordner angeklickt hatte und dann rein-
+        # navigiert, würde sonst der übergeordnete Ordner ausgewählt bleiben.
+        filechooser.selection = []
     filechooser.bind(path=on_path_change)
     def on_path_input(instance):
         entered = instance.text.strip()
