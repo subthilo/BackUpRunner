@@ -138,8 +138,9 @@ def scan_directory(
     # Pfad normalisieren (trailing slashes entfernen etc.)
     path = os.path.normpath(path)
 
-    # Zuerst Gesamtanzahl ermitteln für Fortschrittsanzeige
-    total_files = count_files(path)
+    # Wir verzichten auf das vorherige Zählen (doppeltes os.walk),
+    # da das bei Netzwerk-Laufwerken (NAS) viel zu lange dauert.
+    total_files = 0
 
     files: list[FileInfo] = []
     total_size = 0

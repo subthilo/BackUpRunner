@@ -277,10 +277,11 @@ class ScanScreen(Screen):
         """
         def update(dt):
             self.phase_label.text = phase
-            self.progress_label.text = f'{current:,} / {total:,} Dateien'
             if total > 0:
+                self.progress_label.text = f'{current:,} / {total:,} Dateien'
                 self.progress_bar.value = (current / total) * 100
             else:
+                self.progress_label.text = f'{current:,} Dateien gescannt...'
                 self.progress_bar.value = 0
             # Nur den Dateinamen anzeigen, nicht den ganzen Pfad
             if filepath:
