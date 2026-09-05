@@ -1,0 +1,421 @@
+#:kivy 2.3.1
+
+# ============================================================================
+# backuprunner.kv – UI-Layout für BackUpRunner
+# ============================================================================
+#
+# Diese Datei definiert das gesamte UI-Layout der App mit Kivy Language.
+# Kivy Language (.kv) trennt das Layout vom Python-Code und ermöglicht
+# eine deklarative UI-Beschreibung.
+#
+# Aufbau:
+#   - ScreenManager verwaltet drei Screens
+#   - Screen 1 (SelectScreen):  Quell- und Zielverzeichnis auswählen
+#   - Screen 2 (ScanScreen):    Fortschrittsanzeige während des Scannens
+#   - Screen 3 (ResultScreen):  Analyse-Ergebnisse + CSV-Export
+#
+# Farbschema:
+#   - Hintergrund:  Dunkelgrau (#1e1e2e)
+#   - Akzent:       Blau (#89b4fa)
+#   - Erfolg:       Grün (#a6e3a1)
+#   - Warnung:      Gelb (#f9e2af)
+#   - Info:         Lila (#cba6f7)
+#   - Text:         Weiß (#cdd6f4)
+# ============================================================================
+
+
+# ── Globale Styles ──
+
+<CustomLabel@Label>:
+    color: 0.804, 0.839, 0.957, 1  # #cdd6f4
+    font_size: '16sp'
+
+<CustomButton@Button>:
+    background_color: 0.537, 0.706, 0.980, 1  # #89b4fa
+    color: 0.118, 0.118, 0.180, 1  # #1e1e2e (dunkler Text auf hellem Button)
+    font_size: '16sp'
+    size_hint_y: None
+    height: '48dp'
+    bold: True
+
+<HeaderLabel@Label>:
+    color: 0.804, 0.839, 0.957, 1
+    font_size: '28sp'
+    bold: True
+    size_hint_y: None
+    height: '60dp'
+
+<SubHeaderLabel@Label>:
+    color: 0.584, 0.616, 0.737, 1  # #9399b2 (gedämpfter Text)
+    font_size: '14sp'
+    size_hint_y: None
+    height: '30dp'
+
+
+# ============================================================================
+# Screen 1: Verzeichnisauswahl
+# ============================================================================
+
+<SelectScreen>:
+    name: 'select'
+
+    # Referenzen auf UI-Elemente, die aus Python angesprochen werden
+    source_input: source_input
+    target_input: target_input
+    start_button: start_button
+    status_label: status_label
+
+    canvas.before:
+        Color:
+            rgba: 0.118, 0.118, 0.180, 1  # #1e1e2e Hintergrund
+        Rectangle:
+            pos: self.pos
+            size: self.size
+
+    BoxLayout:
+        orientation: 'vertical'
+        padding: '40dp'
+        spacing: '20dp'
+
+        # ── Titel ──
+        HeaderLabel:
+            text: '🔍 BackUpRunner'
+        SubHeaderLabel:
+            text: 'Backup-Analyse – Finde heraus, was gesichert ist und was nicht'
+
+        # Abstandhalter
+        Widget:
+            size_hint_y: None
+            height: '20dp'
+
+        # ── Quellverzeichnis ──
+        CustomLabel:
+            text: '📂 Quellverzeichnis (zu prüfender Ordner):'
+            size_hint_y: None
+            height: '30dp'
+            text_size: self.size
+            halign: 'left'
+
+        BoxLayout:
+            size_hint_y: None
+            height: '48dp'
+            spacing: '10dp'
+
+            TextInput:
+                id: source_input
+                hint_text: 'z.B. /Volumes/USB-Platte/Projekte'
+                font_size: '14sp'
+                multiline: False
+                background_color: 0.176, 0.176, 0.255, 1  # #2d2d40
+                foreground_color: 0.804, 0.839, 0.957, 1
+                cursor_color: 0.537, 0.706, 0.980, 1
+                padding: [10, 12, 10, 12]
+
+            CustomButton:
+                text: '📁 Wählen'
+                size_hint_x: None
+                width: '120dp'
+                on_release: root.choose_source()
+
+        # ── Zielverzeichnis ──
+        CustomLabel:
+            text: '💾 Zielverzeichnis (Backup-Root, z.B. NAS):'
+            size_hint_y: None
+            height: '30dp'
+            text_size: self.size
+            halign: 'left'
+
+        BoxLayout:
+            size_hint_y: None
+            height: '48dp'
+            spacing: '10dp'
+
+            TextInput:
+                id: target_input
+                hint_text: 'z.B. /Volumes/NAS/Backups'
+                font_size: '14sp'
+                multiline: False
+                background_color: 0.176, 0.176, 0.255, 1
+                foreground_color: 0.804, 0.839, 0.957, 1
+                cursor_color: 0.537, 0.706, 0.980, 1
+                padding: [10, 12, 10, 12]
+
+            CustomButton:
+                text: '📁 Wählen'
+                size_hint_x: None
+                width: '120dp'
+                on_release: root.choose_target()
+
+        # Abstandhalter
+        Widget:
+            size_hint_y: None
+            height: '20dp'
+
+        # ── Start-Button ──
+        CustomButton:
+            id: start_button
+            text: '🚀 Analyse starten'
+            font_size: '20sp'
+            height: '60dp'
+            background_color: 0.651, 0.890, 0.631, 1  # #a6e3a1 Grün
+            on_release: root.start_scan()
+
+        # ── Status-Anzeige ──
+        CustomLabel:
+            id: status_label
+            text: ''
+            size_hint_y: None
+            height: '30dp'
+            color: 0.976, 0.886, 0.686, 1  # #f9e2af Gelb für Warnungen
+
+        # Flexibler Abstandhalter (füllt restlichen Platz)
+        Widget:
+
+
+# ============================================================================
+# Screen 2: Scan-Fortschritt
+# ============================================================================
+
+<ScanScreen>:
+    name: 'scan'
+
+    # Referenzen auf UI-Elemente
+    phase_label: phase_label
+    progress_bar: progress_bar
+    progress_label: progress_label
+    current_file_label: current_file_label
+    cancel_button: cancel_button
+
+    canvas.before:
+        Color:
+            rgba: 0.118, 0.118, 0.180, 1
+        Rectangle:
+            pos: self.pos
+            size: self.size
+
+    BoxLayout:
+        orientation: 'vertical'
+        padding: '40dp'
+        spacing: '20dp'
+
+        # ── Titel ──
+        HeaderLabel:
+            text: '⏳ Analyse läuft...'
+
+        # Abstandhalter
+        Widget:
+            size_hint_y: 0.1
+
+        # ── Aktuelle Phase (Quelle scannen / Ziel scannen / Vergleichen) ──
+        CustomLabel:
+            id: phase_label
+            text: 'Initialisiere...'
+            font_size: '20sp'
+            bold: True
+
+        # ── Fortschrittsbalken ──
+        ProgressBar:
+            id: progress_bar
+            max: 100
+            value: 0
+            size_hint_y: None
+            height: '30dp'
+
+        # ── Fortschrittstext (z.B. "342 / 1.205 Dateien") ──
+        CustomLabel:
+            id: progress_label
+            text: '0 / 0 Dateien'
+            font_size: '14sp'
+
+        # ── Aktuelle Datei ──
+        CustomLabel:
+            id: current_file_label
+            text: ''
+            font_size: '12sp'
+            color: 0.584, 0.616, 0.737, 1  # gedämpft
+            text_size: self.width, None
+            shorten: True
+            shorten_from: 'left'
+
+        # Abstandhalter
+        Widget:
+            size_hint_y: 0.2
+
+        # ── Abbrechen-Button ──
+        CustomButton:
+            id: cancel_button
+            text: '❌ Abbrechen'
+            background_color: 0.953, 0.545, 0.659, 1  # #f38ba8 Rot
+            on_release: root.cancel_scan()
+
+        Widget:
+            size_hint_y: 0.1
+
+
+# ============================================================================
+# Screen 3: Analyse-Ergebnisse
+# ============================================================================
+
+<ResultScreen>:
+    name: 'result'
+
+    # Referenzen auf UI-Elemente
+    summary_label: summary_label
+    tab_panel: tab_panel
+    identical_list: identical_list
+    moved_list: moved_list
+    no_backup_list: no_backup_list
+    duplicates_list: duplicates_list
+
+    canvas.before:
+        Color:
+            rgba: 0.118, 0.118, 0.180, 1
+        Rectangle:
+            pos: self.pos
+            size: self.size
+
+    BoxLayout:
+        orientation: 'vertical'
+        padding: '20dp'
+        spacing: '10dp'
+
+        # ── Titel + Zusammenfassung ──
+        HeaderLabel:
+            text: '📊 Analyse-Ergebnisse'
+
+        CustomLabel:
+            id: summary_label
+            text: 'Wird berechnet...'
+            font_size: '14sp'
+            size_hint_y: None
+            height: '40dp'
+            text_size: self.size
+            halign: 'center'
+
+        # ── Tab-Ansicht mit den vier Kategorien ──
+        TabbedPanel:
+            id: tab_panel
+            do_default_tab: False
+            tab_width: self.width / 4
+            background_color: 0.176, 0.176, 0.255, 1
+
+            # ── Tab: Kein Backup ⚠️ ──
+            TabbedPanelItem:
+                text: '⚠️ Kein Backup'
+                background_color: 0.976, 0.886, 0.686, 0.3
+
+                ScrollView:
+                    BoxLayout:
+                        id: no_backup_list
+                        orientation: 'vertical'
+                        size_hint_y: None
+                        height: self.minimum_height
+                        spacing: '2dp'
+                        padding: '10dp'
+
+            # ── Tab: Identisch ✅ ──
+            TabbedPanelItem:
+                text: '✅ Identisch'
+                background_color: 0.651, 0.890, 0.631, 0.3
+
+                ScrollView:
+                    BoxLayout:
+                        id: identical_list
+                        orientation: 'vertical'
+                        size_hint_y: None
+                        height: self.minimum_height
+                        spacing: '2dp'
+                        padding: '10dp'
+
+            # ── Tab: Anderer Pfad 🔀 ──
+            TabbedPanelItem:
+                text: '🔀 Anderer Pfad'
+                background_color: 0.796, 0.651, 0.969, 0.3
+
+                ScrollView:
+                    BoxLayout:
+                        id: moved_list
+                        orientation: 'vertical'
+                        size_hint_y: None
+                        height: self.minimum_height
+                        spacing: '2dp'
+                        padding: '10dp'
+
+            # ── Tab: Duplikate 📋 ──
+            TabbedPanelItem:
+                text: '📋 Duplikate'
+                background_color: 0.537, 0.706, 0.980, 0.3
+
+                ScrollView:
+                    BoxLayout:
+                        id: duplicates_list
+                        orientation: 'vertical'
+                        size_hint_y: None
+                        height: self.minimum_height
+                        spacing: '2dp'
+                        padding: '10dp'
+
+        # ── Action-Buttons ──
+        BoxLayout:
+            size_hint_y: None
+            height: '50dp'
+            spacing: '10dp'
+
+            CustomButton:
+                text: '💾 CSV-Report exportieren'
+                on_release: root.export_report()
+
+            CustomButton:
+                text: '🔄 Neuer Vergleich'
+                background_color: 0.796, 0.651, 0.969, 1  # Lila
+                on_release: root.new_comparison()
+
+
+# ── Wiederverwendbare Zeile für Datei-Listen ──
+
+<FileRow@BoxLayout>:
+    size_hint_y: None
+    height: '60dp'
+    spacing: '10dp'
+    padding: '10dp', '5dp'
+
+    canvas.before:
+        Color:
+            rgba: 0.176, 0.176, 0.255, 0.5  # Hintergrund der Zeile
+        RoundedRectangle:
+            pos: self.pos
+            size: self.size
+            radius: [5]
+
+    # Dateiname und Pfad (links)
+    BoxLayout:
+        orientation: 'vertical'
+        Label:
+            text: root.filename if hasattr(root, 'filename') else ''
+            font_size: '14sp'
+            color: 0.804, 0.839, 0.957, 1
+            text_size: self.size
+            halign: 'left'
+            valign: 'middle'
+            shorten: True
+            shorten_from: 'left'
+        Label:
+            text: root.detail if hasattr(root, 'detail') else ''
+            font_size: '11sp'
+            color: 0.584, 0.616, 0.737, 1
+            text_size: self.size
+            halign: 'left'
+            valign: 'middle'
+            shorten: True
+            shorten_from: 'left'
+
+    # Dateigröße (rechts)
+    Label:
+        text: root.size_text if hasattr(root, 'size_text') else ''
+        font_size: '13sp'
+        color: 0.584, 0.616, 0.737, 1
+        size_hint_x: None
+        width: '80dp'
+        halign: 'right'
+        text_size: self.size
+        valign: 'middle'
