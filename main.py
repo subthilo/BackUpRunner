@@ -348,7 +348,7 @@ class ScanScreen(Screen):
             # ── Phase 2: Zielverzeichnis scannen (oder aus Cache laden) ──
             if not update_cache and cache_manager.has_target_cache():
                 self._update_ui('💾 Lade NAS-Index aus dem Cache...', 0, 0, 'Verarbeite Datenbank (0 Sekunden Wartezeit)...')
-                target_files, target_size = cache_manager.load_target_cache()
+                target_files, target_size = cache_manager.load_target_cache(target_path)
             else:
                 self._update_ui('💾 Scanne Zielverzeichnis (NAS)...', 0, 0, 'Dies kann sehr lange dauern!')
 
@@ -369,7 +369,7 @@ class ScanScreen(Screen):
                 
                 # Cache sofort speichern, damit er beim nächsten Mal bereitsteht
                 self._update_ui('💾 Speichere NAS-Index in Cache...', 0, 0, 'Bitte warten...')
-                cache_manager.save_target_cache(target_files)
+                cache_manager.save_target_cache(target_path, target_files)
 
             if self._cancelled:
                 return
