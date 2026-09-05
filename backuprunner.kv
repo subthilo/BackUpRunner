@@ -159,14 +159,34 @@
                 width: '40dp'
                 color: 0.537, 0.706, 0.980, 1
 
-            Label:
-                text: '⚡ Schneller Vergleich (Nur Größe & Datum - extrem schnell)'
-                color: 0.804, 0.839, 0.957, 1
+            CustomLabel:
+                text: '⚡ Schneller Vergleich (Nur Größe & Datum)'
+                size_hint_x: 1
                 text_size: self.size
                 halign: 'left'
-                valign: 'middle'
+                valign: 'center'
 
-        # Abstandhalter
+        # ── NAS-Index aktualisieren Checkbox ──
+        BoxLayout:
+            size_hint_y: None
+            height: '40dp'
+            spacing: '10dp'
+
+            CheckBox:
+                id: update_cache_checkbox
+                active: False
+                size_hint_x: None
+                width: '40dp'
+                color: 0.537, 0.706, 0.980, 1
+
+            CustomLabel:
+                text: '🔄 NAS-Index aktualisieren (Dauert lange! Zwingt neuen Scan)'
+                size_hint_x: 1
+                text_size: self.size
+                halign: 'left'
+                valign: 'center'
+
+        # Abstandhalter (dehnbar)
         Widget:
             size_hint_y: None
             height: '20dp'

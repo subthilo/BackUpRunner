@@ -41,6 +41,8 @@ from scanner import scan_directory, build_hash_index
 from comparator import compare_directories, ComparisonResult
 from report import export_csv, format_size
 from operations import copy_file, move_to_trash
+import config_manager
+import cache_manager
 
 
 # ============================================================================
@@ -121,6 +123,16 @@ class SelectScreen(Screen):
     start_button = ObjectProperty(None)
     status_label = ObjectProperty(None)
 
+    def on_kv_post(self, base_widget):
+        """Wird aufgerufen, nachdem die KV-Datei geladen wurde."""
+        # Konfiguration beim Start laden und UI vorbefüllen
+        config = config_manager.load_config()
+        if config:
+            self.source_input.text = config.get('source', '')
+            self.target_input.text = config.get('target', '')
+            self.ids.fast_mode_checkbox.active = config.get('fast_mode', False)
+            self.ids.update_cache_checkbox.active = config.get('update_cache', False)
+
     def choose_source(self):
         """Öffnet einen Dateibrowser zur Auswahl des Quellverzeichnisses."""
         open_directory_chooser(
@@ -178,6 +190,10 @@ class SelectScreen(Screen):
         app.source_path = source
         app.target_path = target
         app.fast_mode = self.ids.fast_mode_checkbox.active
+        app.update_cache = self.ids.update_cache_checkbox.active
+
+        # Einstellungen dauerhaft speichern
+        config_manager.save_config(source, target, app.fast_mode, app.update_cache)
 
         # Zum Scan-Screen wechseln
         self.manager.transition = SlideTransition(direction='left')
@@ -185,7 +201,7 @@ class SelectScreen(Screen):
 
         # Scan starten (im ScanScreen)
         scan_screen = self.manager.get_screen('scan')
-        scan_screen.start_scan(source, target, app.fast_mode)
+        scan_screen.start_scan(source, target, app.fast_mode, app.update_cache)
 
 
 # Hilfklasse für Buttons (wird auch in Python-Code verwendet)
@@ -235,7 +251,7 @@ class ScanScreen(Screen):
         self._scan_thread = None
         self._cancelled = False
 
-    def start_scan(self, source_path, target_path, fast_mode=False):
+    def start_scan(self, source_path, target_path, fast_mode=False, update_cache=False):
         """
         Startet den Scan-Vorgang in einem Hintergrund-Thread.
 
@@ -243,11 +259,12 @@ class ScanScreen(Screen):
             source_path: Pfad zum Quellverzeichnis
             target_path: Pfad zum Zielverzeichnis
             fast_mode: Wenn True, wird nur Größe & Datum statt Hash verglichen
+            update_cache: Wenn True, wird das NAS komplett neu gescannt
         """
         self._cancelled = False
         self._scan_thread = threading.Thread(
             target=self._run_scan,
-            args=(source_path, target_path, fast_mode),
+            args=(source_path, target_path, fast_mode, update_cache),
             daemon=True  # Thread wird beendet, wenn die App beendet wird
         )
         self._scan_thread.start()
@@ -292,13 +309,13 @@ class ScanScreen(Screen):
                 self.current_file_label.text = filepath
         Clock.schedule_once(update)
 
-    def _run_scan(self, source_path, target_path, fast_mode):
+    def _run_scan(self, source_path, target_path, fast_mode, update_cache):
         """
         Haupt-Scan-Logik – läuft im Hintergrund-Thread.
 
         Ablauf:
         1. Quellverzeichnis scannen (alle Dateien + Hashes)
-        2. Zielverzeichnis scannen (alle Dateien + Hashes)
+        2. Zielverzeichnis scannen (oder aus Cache laden)
         3. Hash-Index aufbauen
         4. Vergleich durchführen
         5. Ergebnis an den ResultScreen übergeben
@@ -307,6 +324,7 @@ class ScanScreen(Screen):
             source_path: Pfad zum Quellverzeichnis
             target_path: Pfad zum Zielverzeichnis
             fast_mode: Boolean, ob schneller Vergleich aktiv ist
+            update_cache: Boolean, ob der NAS-Cache ignoriert/erneuert werden soll
         """
         try:
             # ── Phase 1: Quellverzeichnis scannen ──
@@ -327,20 +345,31 @@ class ScanScreen(Screen):
             if self._cancelled:
                 return
 
-            # ── Phase 2: Zielverzeichnis scannen ──
-            self._update_ui('💾 Zähle Dateien im Zielverzeichnis...', 0, 0, 'Bitte warten (bei NAS kann das dauern)...')
+            # ── Phase 2: Zielverzeichnis scannen (oder aus Cache laden) ──
+            if not update_cache and cache_manager.has_target_cache():
+                self._update_ui('💾 Lade NAS-Index aus dem Cache...', 0, 0, 'Verarbeite Datenbank (0 Sekunden Wartezeit)...')
+                target_files, target_size = cache_manager.load_target_cache()
+            else:
+                self._update_ui('💾 Scanne Zielverzeichnis (NAS)...', 0, 0, 'Dies kann sehr lange dauern!')
 
-            def target_progress(current, total, filepath):
+                def target_progress(current, total, filepath):
+                    if self._cancelled:
+                        return
+                    self._update_ui(
+                        '💾 Scanne Zielverzeichnis...',
+                        current, total, filepath
+                    )
+
+                target_files, target_size = scan_directory(
+                    target_path, target_progress, fast_mode=fast_mode
+                )
+                
                 if self._cancelled:
                     return
-                self._update_ui(
-                    '💾 Scanne Zielverzeichnis...',
-                    current, total, filepath
-                )
-
-            target_files, target_size = scan_directory(
-                target_path, target_progress, fast_mode=fast_mode
-            )
+                
+                # Cache sofort speichern, damit er beim nächsten Mal bereitsteht
+                self._update_ui('💾 Speichere NAS-Index in Cache...', 0, 0, 'Bitte warten...')
+                cache_manager.save_target_cache(target_files)
 
             if self._cancelled:
                 return
@@ -536,12 +565,33 @@ class ResultScreen(Screen):
     def copy_single_file(self, item, row):
         def on_target_selected(target_dir):
             try:
-                copy_file(
+                target_path = copy_file(
                     item.source_file.absolute_path, 
                     target_dir, 
                     item.source_file.relative_path, 
                     expected_hash=item.source_file.hash
                 )
+                
+                # Cache aktualisieren
+                app = App.get_running_app()
+                new_size = os.path.getsize(target_path)
+                new_mtime = os.path.getmtime(target_path)
+                if getattr(app, 'fast_mode', False):
+                    new_hash = f"FAST_{new_size}_{int(new_mtime)}"
+                else:
+                    from scanner import compute_hash
+                    new_hash = compute_hash(target_path)
+                    
+                from scanner import FileInfo
+                new_info = FileInfo(
+                    absolute_path=target_path,
+                    relative_path=item.source_file.relative_path,
+                    size=new_size,
+                    modified_time=new_mtime,
+                    hash=new_hash
+                )
+                cache_manager.add_to_target_cache(new_info)
+                
                 row.ids.action_container.clear_widgets()
                 lbl = Label(text='✅ Kopiert', color=(0.651, 0.890, 0.631, 1), size_hint_x=None, width='80dp')
                 trash_btn = CustomButton(text='🗑️ Quelle in Papierkorb', size_hint_x=None, width='180dp', height='40dp')
@@ -570,15 +620,36 @@ class ResultScreen(Screen):
             
         def on_target_selected(target_dir):
             success_items = []
+            app = App.get_running_app()
+            is_fast_mode = getattr(app, 'fast_mode', False)
+            from scanner import compute_hash, FileInfo
+            
             for item in result.no_backup:
                 try:
-                    copy_file(
+                    target_path = copy_file(
                         item.source_file.absolute_path, 
                         target_dir, 
                         item.source_file.relative_path, 
                         expected_hash=item.source_file.hash
                     )
                     success_items.append(item)
+                    
+                    # Cache updaten
+                    new_size = os.path.getsize(target_path)
+                    new_mtime = os.path.getmtime(target_path)
+                    if is_fast_mode:
+                        new_hash = f"FAST_{new_size}_{int(new_mtime)}"
+                    else:
+                        new_hash = compute_hash(target_path)
+                        
+                    cache_manager.add_to_target_cache(FileInfo(
+                        absolute_path=target_path,
+                        relative_path=item.source_file.relative_path,
+                        size=new_size,
+                        modified_time=new_mtime,
+                        hash=new_hash
+                    ))
+                    
                 except Exception as e:
                     print(f"Fehler bei {item.source_file.absolute_path}: {e}")
             
@@ -699,6 +770,14 @@ class BackUpRunnerApp(App):
         sm.add_widget(SelectScreen(name='select'))
         sm.add_widget(ScanScreen(name='scan'))
         sm.add_widget(ResultScreen(name='result'))
+
+        # Konfiguration laden und SelectScreen vorausfüllen
+        config = config_manager.load_config()
+        select_screen = sm.get_screen('select')
+        select_screen.ids.source_input.text = config.get("source_path", "")
+        select_screen.ids.target_input.text = config.get("target_path", "")
+        select_screen.ids.fast_mode_checkbox.active = config.get("fast_mode", True)
+        select_screen.ids.update_cache_checkbox.active = config.get("update_cache", False)
 
         return sm
 
