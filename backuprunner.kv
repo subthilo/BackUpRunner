@@ -349,13 +349,22 @@
                     padding: '5dp'
                     spacing: '5dp'
 
-                    CustomButton:
-                        id: copy_all_button
-                        text: '🚀 Alle fehlenden Dateien kopieren...'
+                    BoxLayout:
                         size_hint_y: None
                         height: '40dp'
-                        background_color: 0.651, 0.890, 0.631, 1
-                        on_release: root.copy_all_missing()
+                        spacing: '10dp'
+
+                        CustomButton:
+                            id: copy_all_button
+                            text: '🚀 Alle kopieren...'
+                            background_color: 0.651, 0.890, 0.631, 1
+                            on_release: root.copy_all_missing()
+                            
+                        CustomButton:
+                            id: trash_all_missing_button
+                            text: '🗑️ Alle in Papierkorb...'
+                            background_color: 0.953, 0.545, 0.659, 1
+                            on_release: root.trash_all_missing()
 
                     ScrollView:
                         BoxLayout:
@@ -371,14 +380,26 @@
                 text: '✅ Identisch'
                 background_color: 0.651, 0.890, 0.631, 0.3
 
-                ScrollView:
-                    BoxLayout:
-                        id: identical_list
-                        orientation: 'vertical'
+                BoxLayout:
+                    orientation: 'vertical'
+                    spacing: '5dp'
+
+                    CustomButton:
+                        id: trash_all_button
+                        text: '🗑️ Alle identischen Quellen in den Papierkorb...'
                         size_hint_y: None
-                        height: self.minimum_height
-                        spacing: '2dp'
-                        padding: '10dp'
+                        height: '40dp'
+                        background_color: 0.953, 0.545, 0.659, 1  # Rot
+                        on_release: root.trash_all_identical()
+
+                    ScrollView:
+                        BoxLayout:
+                            id: identical_list
+                            orientation: 'vertical'
+                            size_hint_y: None
+                            height: self.minimum_height
+                            spacing: '2dp'
+                            padding: '10dp'
 
             # ── Tab: Anderer Pfad 🔀 ──
             TabbedPanelItem:
@@ -413,6 +434,11 @@
             size_hint_y: None
             height: '50dp'
             spacing: '10dp'
+
+            CustomButton:
+                text: '🗑️ Kompletten Quellordner in Papierkorb...'
+                background_color: 0.953, 0.545, 0.659, 1  # Rot
+                on_release: root.trash_entire_source()
 
             CustomButton:
                 text: '💾 CSV-Report exportieren'

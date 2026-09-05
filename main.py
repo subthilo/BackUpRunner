@@ -36,6 +36,7 @@ from kivy.uix.popup import Popup
 from kivy.uix.filechooser import FileChooserListView
 from kivy.clock import Clock
 from kivy.properties import ObjectProperty, StringProperty
+from kivy.core.window import Window
 
 from scanner import scan_directory, build_hash_index
 from comparator import compare_directories, ComparisonResult
@@ -104,6 +105,28 @@ def open_directory_chooser(title, callback):
         callback(selected)
         popup.dismiss()
     select_btn.bind(on_release=on_select)
+    
+    # Drag & Drop für den Chooser aktivieren
+    from kivy.core.window import Window
+    def on_drop_in_chooser(window, filename, x, y):
+        try:
+            file_path = filename.decode('utf-8')
+            import os
+            if os.path.isdir(file_path):
+                filechooser.path = file_path
+                path_input.text = file_path
+        except Exception:
+            pass
+
+    def bind_dnd(instance):
+        Window.bind(on_drop_file=on_drop_in_chooser)
+        
+    def unbind_dnd(instance):
+        Window.unbind(on_drop_file=on_drop_in_chooser)
+        
+    popup.bind(on_open=bind_dnd)
+    popup.bind(on_dismiss=unbind_dnd)
+    
     popup.open()
 
 class SelectScreen(Screen):
@@ -132,6 +155,47 @@ class SelectScreen(Screen):
             self.target_input.text = config.get('target', '')
             self.ids.fast_mode_checkbox.active = config.get('fast_mode', False)
             self.ids.update_cache_checkbox.active = config.get('update_cache', False)
+
+    def on_enter(self, *args):
+        """Wenn der Screen sichtbar wird, Drag&Drop binden."""
+        Window.bind(on_drop_file=self._on_drop_file)
+
+    def on_leave(self, *args):
+        """Wenn der Screen verlassen wird, Drag&Drop wieder entfernen."""
+        Window.unbind(on_drop_file=self._on_drop_file)
+
+    def _on_drop_file(self, window, filename, x, y):
+        """Behandelt Drag & Drop von Verzeichnissen in die App."""
+        try:
+            # Dateipfad decodieren (Kivy gibt bytes zurück)
+            file_path = filename.decode('utf-8')
+            
+            # Prüfen, ob es ein Verzeichnis ist
+            if not os.path.isdir(file_path):
+                self.status_label.text = '⚠️ Bitte einen Ordner hineinziehen, keine einzelne Datei!'
+                return
+                
+            # Wir machen es dem Nutzer einfach: Wenn er die obere Hälfte des Bildschirms trifft,
+            # wird es Quelle, in der unteren Hälfte Ziel.
+            # Alternativ können wir direkt prüfen, welches Textfeld getroffen wurde:
+            if self.source_input.collide_point(*self.source_input.to_widget(x, y)):
+                self.source_input.text = file_path
+                self.status_label.text = '✅ Quellverzeichnis gesetzt'
+            elif self.target_input.collide_point(*self.target_input.to_widget(x, y)):
+                self.target_input.text = file_path
+                self.status_label.text = '✅ Zielverzeichnis gesetzt'
+            else:
+                # Falls irgendwo anders hin gezogen wurde, nehmen wir das Feld, das leer ist
+                if not self.source_input.text.strip():
+                    self.source_input.text = file_path
+                    self.status_label.text = '✅ Quellverzeichnis gesetzt (Auto-Zuweisung)'
+                elif not self.target_input.text.strip():
+                    self.target_input.text = file_path
+                    self.status_label.text = '✅ Zielverzeichnis gesetzt (Auto-Zuweisung)'
+                else:
+                    self.status_label.text = 'ℹ️ Bitte ziehe den Ordner direkt auf das Quell- oder Zielfeld!'
+        except Exception as e:
+            self.status_label.text = f'⚠️ Fehler beim Drag & Drop: {e}'
 
     def choose_source(self):
         """Öffnet einen Dateibrowser zur Auswahl des Quellverzeichnisses."""
@@ -477,13 +541,18 @@ class ResultScreen(Screen):
                 # Wir binden die Aktion mit default arguments, um scoping issues in Schleifen zu vermeiden
                 btn.bind(on_release=lambda instance, i=item, r=row: self.copy_single_file(i, r))
                 row.ids.action_container.add_widget(btn)
+
+                # Löschen Button hinzufügen
+                trash_btn = CustomButton(text='🗑️', width='50dp', size_hint_x=None, height='40dp')
+                trash_btn.background_color = (0.953, 0.545, 0.659, 1) # Rot
+                trash_btn.bind(on_release=lambda instance, p=item.source_file.absolute_path, r=row, b=trash_btn: self.trash_single_file(p, r, b))
+                row.ids.action_container.add_widget(trash_btn)
+                
                 self.no_backup_list.add_widget(row)
         else:
             self.no_backup_list.add_widget(
                 self._create_empty_label('🎉 Alle Dateien sind gesichert!')
             )
-
-        # ── Tab "Identisch" füllen ──
 
         # ── Tab "Identisch" füllen ──
         if result.identical:
@@ -494,6 +563,12 @@ class ResultScreen(Screen):
                     detail=f'Ziel: {target_info}',
                     size=item.source_file.size
                 )
+                
+                btn = CustomButton(text='🗑️ Löschen', width='100dp', size_hint_x=None, height='40dp')
+                btn.background_color = (0.953, 0.545, 0.659, 1) # Rot
+                btn.bind(on_release=lambda instance, p=item.source_file.absolute_path, r=row, b=btn: self.trash_single_file(p, r, b))
+                row.ids.action_container.add_widget(btn)
+                
                 self.identical_list.add_widget(row)
         else:
             self.identical_list.add_widget(
@@ -612,6 +687,108 @@ class ResultScreen(Screen):
         else:
             Popup(title='❌ Fehler', content=Label(text=f'Konnte {path} nicht löschen.'), size_hint=(0.7, 0.3)).open()
 
+    def trash_all_identical(self):
+        app = App.get_running_app()
+        result = app.comparison_result
+        if not result or not result.identical:
+            return
+            
+        def on_confirm(instance):
+            popup.dismiss()
+            success_count = 0
+            freed_space = 0
+            
+            for item in result.identical:
+                if move_to_trash(item.source_file.absolute_path):
+                    success_count += 1
+                    freed_space += item.source_file.size
+            
+            self.identical_list.clear_widgets()
+            self.identical_list.add_widget(
+                self._create_empty_label(f'✅ {success_count} Dateien in Papierkorb verschoben')
+            )
+            
+            Popup(
+                title='Erfolgreich gelöscht',
+                content=Label(
+                    text=f'{success_count} Dateien wurden in den Papierkorb verschoben.\nFreigegebener Speicherplatz: {format_size(freed_space)}', 
+                    text_size=(380, None),
+                    halign='center'
+                ),
+                size_hint=(0.8, 0.4)
+            ).open()
+
+        content = BoxLayout(orientation='vertical', spacing='10dp', padding='10dp')
+        content.add_widget(Label(
+            text=f'Sollen {len(result.identical)} identische Dateien auf der Quelle (Mac) in den Papierkorb verschoben werden?',
+            text_size=(380, None),
+            halign='center'
+        ))
+        
+        btn_layout = BoxLayout(size_hint_y=None, height='40dp', spacing='10dp')
+        cancel_btn = CustomButton(text='Abbrechen', background_color=(0.584, 0.616, 0.737, 1))
+        confirm_btn = CustomButton(text='In Papierkorb', background_color=(0.953, 0.545, 0.659, 1))
+        
+        btn_layout.add_widget(cancel_btn)
+        btn_layout.add_widget(confirm_btn)
+        content.add_widget(btn_layout)
+        
+        popup = Popup(title='Löschen bestätigen', content=content, size_hint=(0.9, 0.4), auto_dismiss=False)
+        cancel_btn.bind(on_release=popup.dismiss)
+        confirm_btn.bind(on_release=on_confirm)
+        popup.open()
+
+    def trash_all_missing(self):
+        app = App.get_running_app()
+        result = app.comparison_result
+        if not result or not result.no_backup:
+            return
+            
+        def on_confirm(instance):
+            popup.dismiss()
+            success_count = 0
+            freed_space = 0
+            
+            for item in result.no_backup:
+                if move_to_trash(item.source_file.absolute_path):
+                    success_count += 1
+                    freed_space += item.source_file.size
+            
+            self.no_backup_list.clear_widgets()
+            self.no_backup_list.add_widget(
+                self._create_empty_label(f'✅ {success_count} Dateien in Papierkorb verschoben')
+            )
+            
+            Popup(
+                title='Erfolgreich gelöscht',
+                content=Label(
+                    text=f'{success_count} ungesicherte Dateien wurden in den Papierkorb verschoben.\nFreigegebener Speicherplatz: {format_size(freed_space)}', 
+                    text_size=(380, None),
+                    halign='center'
+                ),
+                size_hint=(0.8, 0.4)
+            ).open()
+
+        content = BoxLayout(orientation='vertical', spacing='10dp', padding='10dp')
+        content.add_widget(Label(
+            text=f'Sollen {len(result.no_backup)} Dateien OHNE Backup auf der Quelle (Mac) in den Papierkorb verschoben werden?',
+            text_size=(380, None),
+            halign='center'
+        ))
+        
+        btn_layout = BoxLayout(size_hint_y=None, height='40dp', spacing='10dp')
+        cancel_btn = CustomButton(text='Abbrechen', background_color=(0.584, 0.616, 0.737, 1))
+        confirm_btn = CustomButton(text='In Papierkorb', background_color=(0.953, 0.545, 0.659, 1))
+        
+        btn_layout.add_widget(cancel_btn)
+        btn_layout.add_widget(confirm_btn)
+        content.add_widget(btn_layout)
+        
+        popup = Popup(title='Löschen bestätigen', content=content, size_hint=(0.9, 0.4), auto_dismiss=False)
+        cancel_btn.bind(on_release=popup.dismiss)
+        confirm_btn.bind(on_release=on_confirm)
+        popup.open()
+
     def copy_all_missing(self):
         app = App.get_running_app()
         result = app.comparison_result
@@ -620,64 +797,154 @@ class ResultScreen(Screen):
             
         def on_target_selected(target_dir):
             success_items = []
-            app = App.get_running_app()
             is_fast_mode = getattr(app, 'fast_mode', False)
-            from scanner import compute_hash, FileInfo
+            total_items = len(result.no_backup)
             
-            for item in result.no_backup:
-                try:
-                    target_path = copy_file(
-                        item.source_file.absolute_path, 
-                        target_dir, 
-                        item.source_file.relative_path, 
-                        expected_hash=item.source_file.hash
-                    )
-                    success_items.append(item)
-                    
-                    # Cache updaten
-                    new_size = os.path.getsize(target_path)
-                    new_mtime = os.path.getmtime(target_path)
-                    if is_fast_mode:
-                        new_hash = f"FAST_{new_size}_{int(new_mtime)}"
-                    else:
-                        new_hash = compute_hash(target_path)
-                        
-                    cache_manager.add_to_target_cache(FileInfo(
-                        absolute_path=target_path,
-                        relative_path=item.source_file.relative_path,
-                        size=new_size,
-                        modified_time=new_mtime,
-                        hash=new_hash
-                    ))
-                    
-                except Exception as e:
-                    print(f"Fehler bei {item.source_file.absolute_path}: {e}")
+            from kivy.uix.progressbar import ProgressBar
+            import threading
             
-            # Popup fragen, ob Originale in den Papierkorb sollen
-            content = BoxLayout(orientation='vertical', spacing=10, padding=10)
-            content.add_widget(Label(
-                text=f'✅ {len(success_items)} Dateien kopiert.\n\nSollen die Original-Dateien auf\ndeinem Mac in den Papierkorb verschoben werden?',
-                halign='center'
-            ))
-            btn_layout = BoxLayout(size_hint_y=None, height='40dp', spacing=10)
-            btn_keep = CustomButton(text='Behalten')
-            btn_trash = CustomButton(text='🗑️ In Papierkorb', background_color=(0.953, 0.545, 0.659, 1))
-            btn_layout.add_widget(btn_keep)
-            btn_layout.add_widget(btn_trash)
-            content.add_widget(btn_layout)
+            content = BoxLayout(orientation='vertical', spacing='10dp', padding='10dp')
+            progress_label = Label(text='Starte Kopiervorgang...', text_size=(380, None), halign='center')
+            progress_bar = ProgressBar(max=total_items, value=0)
+            cancel_btn = CustomButton(text='Abbrechen', background_color=(0.953, 0.545, 0.659, 1))
             
-            popup = Popup(title='Kopieren beendet', content=content, size_hint=(0.8, 0.4))
+            content.add_widget(progress_label)
+            content.add_widget(progress_bar)
+            content.add_widget(cancel_btn)
             
-            def do_trash(inst):
-                for item in success_items:
-                    move_to_trash(item.source_file.absolute_path)
+            popup = Popup(title='Kopiere Dateien...', content=content, size_hint=(0.8, 0.4), auto_dismiss=False)
+            
+            stop_event = threading.Event()
+            
+            def cancel_copy(instance):
+                stop_event.set()
+                progress_label.text = 'Abbruch wird vorbereitet...'
+                cancel_btn.disabled = True
+
+            cancel_btn.bind(on_release=cancel_copy)
+            
+            def update_ui(current, total, file_name):
+                progress_bar.value = current
+                progress_label.text = f'Kopiere Datei {current} von {total}...\n{file_name}'
+            
+            def finish_copy(dt):
                 popup.dismiss()
+                ask_content = BoxLayout(orientation='vertical', spacing=10, padding=10)
+                ask_content.add_widget(Label(
+                    text=f'✅ {len(success_items)} Dateien kopiert.\n\nSollen die Original-Dateien auf\ndeinem Mac in den Papierkorb verschoben werden?',
+                    halign='center'
+                ))
+                btn_layout = BoxLayout(size_hint_y=None, height='40dp', spacing=10)
+                btn_keep = CustomButton(text='Behalten')
+                btn_trash = CustomButton(text='🗑️ In Papierkorb', background_color=(0.953, 0.545, 0.659, 1))
+                btn_layout.add_widget(btn_keep)
+                btn_layout.add_widget(btn_trash)
+                ask_content.add_widget(btn_layout)
                 
-            btn_keep.bind(on_release=popup.dismiss)
-            btn_trash.bind(on_release=do_trash)
+                ask_popup = Popup(title='Kopieren beendet', content=ask_content, size_hint=(0.8, 0.4))
+                
+                def do_trash(inst):
+                    for item in success_items:
+                        move_to_trash(item.source_file.absolute_path)
+                    ask_popup.dismiss()
+                    
+                btn_keep.bind(on_release=ask_popup.dismiss)
+                btn_trash.bind(on_release=do_trash)
+                ask_popup.open()
+                
+            def copy_thread_func():
+                from scanner import compute_hash, FileInfo
+                
+                for i, item in enumerate(result.no_backup):
+                    if stop_event.is_set():
+                        break
+                        
+                    # Aktualisiere die UI über Clock (auf Main-Thread)
+                    Clock.schedule_once(lambda dt, cur=i+1, tot=total_items, fn=item.source_file.relative_path: update_ui(cur, tot, fn), 0)
+                    
+                    try:
+                        target_path = copy_file(
+                            item.source_file.absolute_path, 
+                            target_dir, 
+                            item.source_file.relative_path, 
+                            expected_hash=item.source_file.hash
+                        )
+                        success_items.append(item)
+                        
+                        # Cache updaten
+                        new_size = os.path.getsize(target_path)
+                        new_mtime = os.path.getmtime(target_path)
+                        if is_fast_mode:
+                            new_hash = f"FAST_{new_size}_{int(new_mtime)}"
+                        else:
+                            new_hash = compute_hash(target_path)
+                            
+                        cache_manager.add_to_target_cache(FileInfo(
+                            absolute_path=target_path,
+                            relative_path=item.source_file.relative_path,
+                            size=new_size,
+                            modified_time=new_mtime,
+                            hash=new_hash
+                        ))
+                    except Exception as e:
+                        print(f"Fehler bei {item.source_file.absolute_path}: {e}")
+                
+                Clock.schedule_once(finish_copy, 0)
+            
             popup.open()
+            threading.Thread(target=copy_thread_func, daemon=True).start()
             
         open_directory_chooser("Zielordner für alle fehlenden Dateien wählen", on_target_selected)
+
+    def trash_entire_source(self):
+        app = App.get_running_app()
+        if not getattr(app, 'source_dir', None):
+            return
+            
+        def on_confirm(instance):
+            popup.dismiss()
+            if move_to_trash(app.source_dir):
+                self.new_comparison()
+                Popup(
+                    title='Erfolgreich gelöscht',
+                    content=Label(
+                        text='Der gesamte Quellordner wurde in den Papierkorb verschoben.', 
+                        text_size=(380, None),
+                        halign='center'
+                    ),
+                    size_hint=(0.8, 0.4)
+                ).open()
+            else:
+                Popup(
+                    title='❌ Fehler', 
+                    content=Label(
+                        text='Konnte den Ordner nicht in den Papierkorb verschieben.\n(Evtl. wird der Papierkorb auf dem Laufwerk nicht unterstützt.)', 
+                        text_size=(380, None),
+                        halign='center'
+                    ), 
+                    size_hint=(0.8, 0.4)
+                ).open()
+
+        content = BoxLayout(orientation='vertical', spacing='10dp', padding='10dp')
+        content.add_widget(Label(
+            text=f'[b]Möchtest du den gesamten Quellordner löschen?[/b]\n\n{app.source_dir}\n\nEr wird in den Papierkorb verschoben. Danach kehrt die App zum Startbildschirm zurück.',
+            markup=True,
+            text_size=(380, None),
+            halign='center'
+        ))
+        
+        btn_layout = BoxLayout(size_hint_y=None, height='40dp', spacing='10dp')
+        cancel_btn = CustomButton(text='Abbrechen', background_color=(0.584, 0.616, 0.737, 1))
+        confirm_btn = CustomButton(text='In Papierkorb', background_color=(0.953, 0.545, 0.659, 1))
+        
+        btn_layout.add_widget(cancel_btn)
+        btn_layout.add_widget(confirm_btn)
+        content.add_widget(btn_layout)
+        
+        popup = Popup(title='⚠️ ACHTUNG: Gesamten Ordner löschen', content=content, size_hint=(0.9, 0.5), auto_dismiss=False)
+        cancel_btn.bind(on_release=popup.dismiss)
+        confirm_btn.bind(on_release=on_confirm)
+        popup.open()
 
     def export_report(self):
         """
