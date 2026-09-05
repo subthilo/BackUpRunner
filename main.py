@@ -99,12 +99,65 @@ class SelectScreen(Screen):
         # Layout für das Popup
         content = BoxLayout(orientation='vertical', spacing=10, padding=10)
 
-        # Dateibrowser – zeigt nur Verzeichnisse
+        # ── Pfad-Eingabefeld: Pfad direkt eintippen oder einfügen ──
+        from kivy.uix.textinput import TextInput
+        path_input = TextInput(
+            text='/',
+            hint_text='Pfad eingeben, z.B. /Volumes/MeinNAS',
+            multiline=False,
+            size_hint_y=None,
+            height='40dp',
+            font_size='14sp',
+            background_color=(0.176, 0.176, 0.255, 1),
+            foreground_color=(0.804, 0.839, 0.957, 1),
+            cursor_color=(0.537, 0.706, 0.980, 1),
+            padding=[10, 10, 10, 10]
+        )
+        content.add_widget(path_input)
+
+        # ── Schnellnavigation: Buttons für häufige Orte ──
+        nav_layout = BoxLayout(size_hint_y=None, height='36dp', spacing=5)
+
+        nav_volumes = CustomButton(text='📁 /Volumes', height='36dp', font_size='13sp')
+        nav_home = CustomButton(text='🏠 Home', height='36dp', font_size='13sp')
+        nav_root = CustomButton(text='💻 /', height='36dp', font_size='13sp')
+
+        nav_layout.add_widget(nav_volumes)
+        nav_layout.add_widget(nav_home)
+        nav_layout.add_widget(nav_root)
+        content.add_widget(nav_layout)
+
+        # Dateibrowser – zeigt nur Verzeichnisse, startet bei /
         filechooser = FileChooserListView(
-            path=os.path.expanduser('~'),  # Startet im Home-Verzeichnis
+            path='/',                       # Startet beim Wurzelverzeichnis
             dirselect=True,                 # Verzeichnisse auswählbar
             filters=['!.*'],                # Versteckte Dateien ausblenden
         )
+
+        # Pfad-Eingabe mit FileChooser synchronisieren
+        def on_path_change(instance, value):
+            """Aktualisiert das Pfad-Eingabefeld wenn im Browser navigiert wird."""
+            path_input.text = value
+        filechooser.bind(path=on_path_change)
+
+        def on_path_input(instance):
+            """Navigiert den FileChooser zum eingegebenen Pfad."""
+            entered = instance.text.strip()
+            if os.path.isdir(entered):
+                filechooser.path = entered
+        path_input.bind(on_text_validate=on_path_input)
+
+        # Schnellnavigation-Callbacks
+        def go_volumes(instance):
+            filechooser.path = '/Volumes'
+        def go_home(instance):
+            filechooser.path = os.path.expanduser('~')
+        def go_root(instance):
+            filechooser.path = '/'
+
+        nav_volumes.bind(on_release=go_volumes)
+        nav_home.bind(on_release=go_home)
+        nav_root.bind(on_release=go_root)
 
         content.add_widget(filechooser)
 
